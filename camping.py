@@ -48,6 +48,11 @@ def send_request(url, params):
                 resp.status_code, url, resp.text
             ),
         )
+    # print("printing json...")
+    # resp_json = resp.json()
+    # # for i in resp_json:
+    # print(json.dumps(resp_json, indent = 2))
+
     return resp.json()
 
 
