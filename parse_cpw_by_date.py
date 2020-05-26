@@ -1,19 +1,20 @@
 from selenium import webdriver, common
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+# from selenium.webdriver.common.by import By
+# from selenium.webdriver.support.ui import WebDriverWait
+# from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
-from datetime import datetime
+# from datetime import datetime
 import pandas as pd
-import numpy as np
+# import numpy as np
 
-import json
+# import json
 import os
 import time
 
 # example_URL = "https://www.cpwshop.com/camping/golden-gate-canyon-state-park/r/campsiteDetails.page?parkID=50025&siteID=1073&arvdate=06/16/2020&lengthOfStay=1"
 DATES_BASE_URL = "https://www.cpwshop.com/camping/golden-gate-canyon-state-park/r/campsiteDetails.page?parkID="
 SITES_BASE_URL = "https://www.cpwshop.com/camping/map-of-golden-gate-canyon-state-park/r/campgroundMap.page?parkID="
+PARKS_BASE_URL = "https://www.cpwshop.com/camping"
 PARK_ID = '50025'
 SITE_ID = '1073'
 START_DATE, END_DATE = '6/15/2020', '6/28/2020'
@@ -28,7 +29,10 @@ def parse_dates(park_id, site_id, start_date, end_date):
 		start_date: Date (%d/%m/%Y, str)    Ex: '6/15/2020'
 		end_date:   Date (%d/%m/%Y, str)    Ex: '6/28/2020'
 	RETURNS: 
-		dates_dict:  {'date':'available'}
+		dates_dict:  {
+			'date':'available'
+			[...]
+			}
 	'''
 
 	length_of_stay = 1
@@ -82,7 +86,7 @@ def get_valid_sites():
 	INPUTS: (none)
 	RETURNS: 
 
-		sites_dict:  {
+		sites_dict = {
 			'1164': {
 				pets_allowed': Boolean,
 				'site_type': 'Basic',
@@ -100,9 +104,9 @@ def get_valid_sites():
 	driver.get(URL)
 
 	sites = {}
-	next_exists = True
+	next_page_exists = True
 	page = 0
-	while next_exists:
+	while next_page_exists:
 		page += 1
 		print(f"\nPage #{page}...")
 		# scrape the whole page
@@ -132,12 +136,104 @@ def get_valid_sites():
 			button = driver.find_element_by_css_selector('a.link.standard.btnNext.hidden-xs.pagingButton')
 			button.click()
 		except common.exceptions.NoSuchElementException as err:
-			next_exists = False
+			next_page_exists = False
 			print("no more pages.")
 		time.sleep(1)
 
 	driver.quit()
 	return sites
+
+
+def get_valid_parks():
+	'''
+	finds the full list of valid parks and their URLs
+
+	INPUTS: 
+		(none)
+
+	OUTPUTS:  
+		parks_dict = {
+			'Steamboat Lake State Park, CO' : {
+				'url' : string
+			}
+			[...]
+		}
+
+	'''
+	URL = PARKS_BASE_URL + ".page#"
+	print(URL, "\n", "starting parks scrape...")
+
+	# driver = webdriver.Chrome('chromedriver',chrome_options=chrome_options) #<-- if IN COLAB
+	driver = webdriver.Chrome(os.path.abspath("drivers/chromedriver2")) #<-- if LOCAL
+
+	driver.get(URL)
+
+	parks = {}
+	next_page_exists = True
+	page = 1
+	while next_page_exists:
+		print(f"Page #{page}...")
+
+		check_next_park = True
+		
+		while check_next_park:
+			
+			# scrape the whole page
+			content = driver.page_source
+			soup = BeautifulSoup(content, features = "html.parser")
+
+			# loop through the target elements
+			for tr in soup.body.find_all('tr', attrs = {'name':'e_Glow'}):
+				# find the target span
+				span = tr.td.div.contents[10] # can also try [8,9] if [10] fails
+				
+				# get the park name
+				park_name = span.a.text
+
+				# if this is a new park
+				if park_name not in parks:
+					try: 
+						# follow the link
+						time.sleep(1)
+						button = driver.find_element_by_id(span.a.attrs['id'])
+						button.click()
+						time.sleep(1)
+						# store the park name & URL
+						parks[park_name] = {
+							'url': driver.current_url
+							}
+						print(f"\t{park_name} is new. adding it... ({driver.current_url})")
+						# go back to the original page
+						backlink = driver.find_element_by_id("backlink")
+						backlink.click()
+						time.sleep(1)
+						page = 1
+						print("\nPage #1...")
+						# exit the for loop
+						break
+					except common.exceptions.ElementNotInteractableException as err:
+						print(err)
+				else: 
+					# do nothing (continue to the next tr)
+					pass
+			# if we've looped through the whole park list on this page...
+			else: 
+				# exit the while loop
+				check_next_park = False
+
+		# move on to next page
+		try: 
+			time.sleep(1)
+			button = driver.find_element_by_css_selector('a.link.standard.btnNext.hidden-xs.pagingButton')
+			button.click()
+			page += 1
+		except common.exceptions.NoSuchElementException as err:
+			next_page_exists = False
+			print("no more pages.")
+		time.sleep(1)
+
+	driver.quit()
+	return parks
 
 
 
@@ -147,9 +243,13 @@ if __name__ == '__main__':
 	# for key in dates_dict:
 	# 	print("\t",key, dates_dict[key])
 
-	sites = get_valid_sites()
-	for key in sites:
-		print(key, ":", sites[key])
+	# sites = get_valid_sites()
+	# for key in sites:
+	# 	print(key, ":", sites[key])
+
+	parks = get_valid_parks()
+	for key in parks:
+		print(key, ":", parks[key])
 	
 
 
