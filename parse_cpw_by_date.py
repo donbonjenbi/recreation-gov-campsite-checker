@@ -1,9 +1,5 @@
 from selenium import webdriver, common
-# from selenium.webdriver.common.by import By
-# from selenium.webdriver.support.ui import WebDriverWait
-# from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
-# from datetime import datetime
 import pandas as pd
 import numpy as np
 
@@ -21,6 +17,8 @@ START_DATE, END_DATE = '6/15/2020', '6/30/2020'
 
 # driver = webdriver.Chrome('chromedriver',chrome_options=chrome_options) #<-- if IN COLAB
 driver = webdriver.Chrome(os.path.abspath("drivers/chromedriver-2")) #<-- if LOCAL
+
+
 
 def parse_dates(site_id, start_date, end_date, base_url = DATES_BASE_URL + PARK_ID, ):
 	'''
@@ -63,16 +61,31 @@ def parse_dates(site_id, start_date, end_date, base_url = DATES_BASE_URL + PARK_
 				content = driver.page_source
 				# scrape the whole page
 				soup = BeautifulSoup(content, features = "html.parser")
-				# locate our target span within our target div
-				calendarGrid = soup.body.find('div', attrs = {'id':'calendarGrid'})
-				# first_span = calendarGrid.find('span', recursive=False)
-				spans = calendarGrid.find_all('span', recursive=False)
+				skip = False
+				try: 
+					# locate our target span within our target div
+					calendarGrid = soup.body.find('div', attrs = {'id':'calendarGrid'})
+					# first_span = calendarGrid.find('span', recursive=False)
+					spans = calendarGrid.find_all('span', recursive=False)
+				except: 
+					print("Error occurred when looking for 'calendarGrid' or 'spans'. Waiting 1 sec and trying again...")
+					time.sleep(1)
+					content = driver.page_source
+					soup = BeautifulSoup(content, features = "html.parser")
+					calendarGrid = soup.body.find('div', attrs = {'id':'calendarGrid'})
+					spans = calendarGrid.find_all('span', recursive=False)
+				# finally: 
+				# 	skip = True
+				# 	print("Could not find 'spans' in 'calendarGrid'. Skipping...") 
 
 			# check the contents of our target span
-			if spans[j].a:
-				dates_dict[date] = 'available'
-			elif spans[j].text == "R":
-				dates_dict[date] = 'reserved'
+			if not skip: 
+				if spans[j].a:
+					dates_dict[date] = 'available'
+				elif spans[j].text == "R":
+					dates_dict[date] = 'reserved'
+				else: 
+					dates_dict[date] = 'unknown'
 			else: 
 				dates_dict[date] = 'unknown'
 		except StopIteration:
@@ -169,6 +182,7 @@ def get_valid_sites(base_url = SITES_BASE_URL + PARK_ID):
 	return sites
 
 
+
 def get_valid_parks():
 	'''
 	finds the full list of valid parks and their URLs
@@ -258,11 +272,14 @@ def get_valid_parks():
 	return parks
 
 
+
 def save_json(data_dict, filename):
 	with open(filename, 'w') as file:
 		json.dump(data_dict, file)
 	file.close()
 	print(f"Saved data to file: {filename}.")
+
+
 
 def load_json(filename):
 	with open(filename, 'r') as file:
@@ -272,63 +289,133 @@ def load_json(filename):
 	return data
 
 
-if __name__ == '__main__':
-	# print(f"\n\nScraping campsite availabilities for Park#{PARK_ID}, Site#{SITE_ID}, between {START_DATE} and {END_DATE}...\n")
 
-	# dates = parse_dates(PARK_ID, SITE_ID, START_DATE, END_DATE)
-	# for key in dates:
-	# 	print("\t",key, dates[key])
-
-
-	# sites = get_valid_sites()
-	# for key in sites: #140 sites in 22 sec
-	# 	print(key, ":", sites[key])
-	# print(len(sites))
-
-	# parks = get_valid_parks()
-	# for key in parks:  #37 keys, 321 sec
-	# 	print(key, ":", parks[key])
-	# print(len(parks), "parks total\n")
-	# save_json(parks, 'parks.txt')
-
-	print(f"\n\nScraping campsite availabilities for all CO State parks, between {START_DATE} and {END_DATE}...\n")
-
-	# parks = load_json('parks.json')
-	# first_park = next(iter(parks))	
-
-	# for park in parks:
-	# 	sites = get_valid_sites(base_url = parks[park]['url'])
-	# 	parks[park]['sites'] = sites
-	# save_json(parks, 'data_test.json')
-
-	data = load_json('parks_and_sites.json')
+def update_parks_list(save_path = 'parks.json'):
+	parks = get_valid_parks()
+	for key in parks:  #37 keys, 321 sec
+		print(key, ":", parks[key])
+	print(len(parks), "parks total\n")
+	save_json(parks, save_path)
+	return parks
 
 
-	# print("\n")
-	# first_park = next(iter(data))	
-	# first_park_url = data[first_park]['url']
-	# first_site = next(iter(data[first_park]['sites']))
 
-	# print(first_park, ",", first_site, ",", first_park_url,"\n")
-	# # print(json.dumps(data[first_park], indent=4))
+def update_sites_list(parks_load_path = 'parks.json', save_path = 'parks_and_sites.json'):
+	parks = load_json(parks_load_path)
+	for park in parks:
+		sites = get_valid_sites(base_url = parks[park]['url'])
+		parks[park]['sites'] = sites
+	save_json(parks, save_path)
+	return sites
 
-	# dates = parse_dates(first_site, START_DATE, END_DATE, base_url = first_park_url)
-	# data[first_park]['sites'][first_site]['dates'] = dates
-	# print(json.dumps(data[first_park], indent=4))
 
-	filename = 'allparks_' + START_DATE.replace('/','-') + '_to_' + END_DATE.replace('/','-') + '.json'
 
+def update_dates_data(data, start_date, end_date, save_filename, replace_existing = False):
+	
 	for park in data:
+
 		print(park)
 		park_url = data[park]['url']
 		
 		for site in data[park]['sites']:
-			print("\t", site)
-			data[park]['sites'][site]['dates'] = parse_dates(site, START_DATE, END_DATE, base_url = park_url)
+			
+			if replace_existing == False and 'dates' in data[park]['sites'][site]:
+				print("\t", site, "- already finished. skipping")
+				continue
+			else: 
+				print("\t", site)
+				data[park]['sites'][site]['dates'] = parse_dates(site, start_date, end_date, base_url = park_url)
 
 		save_json(data, filename)
 
-	print(json.dumps(data, indent=4))
+	return data
+
+
+
+def summarize(data, check_in, check_out):
+	
+	first_park = data[next(iter(data))]
+	first_site = first_park['sites'][next(iter(first_park['sites']))]
+	available_dates = first_site['dates']
+	if check_in not in available_dates.keys() or check_out not in available_dates.keys():
+		print(f"\n\tERROR: we don't have data for those dates. Please choose a search window between {list(available_dates.keys())[0]} - {list(available_dates.keys())[-1]}, or scrape new data. \n")
+		return
+
+	print(f"\n\nParks with openings for check-in on {check_in} & check-out on {check_out}...")
+	# print(json.dumps(data, indent=4))
+
+	summary = {}
+
+	# FOR EACH PARK
+	for park_name in data:
+
+		site_type_totals = {}
+
+		park_data = data[park_name]
+		park_url = park_data['url']
+		
+		# FOR EACH SITE: 
+		for site_num in park_data['sites']:
+			site = park_data['sites'][site_num]
+
+			# check this site type
+			site_type = site['site_type']
+			if site_type not in site_type_totals:
+				site_type_totals[site_type] = 0
+
+			# check if this site is availible during these dates
+			date_range = pd.date_range(start = check_in, end = check_out).strftime('%m/%d/%Y')
+			available = True
+			for date in site['dates']:
+				if date in date_range[:-1]:
+					if site['dates'][date] != 'available':
+						available = False
+			if available:
+				site_type_totals[site_type] += 1
+
+		is_full = True
+		for site_type in site_type_totals:
+			if site_type_totals[site_type] != 0:
+				is_full = False
+
+
+		summary[park_name] = {
+			'totals': site_type_totals,
+			'is_full': is_full,
+			'url': park_url,
+		}
+
+	# first print the available parks
+	for park_name in summary:
+		if summary[park_name]['is_full'] == False:
+			print(f"\n\t{park_name[:-4]}:", end =" ")
+			totals = summary[park_name]['totals']
+			for site_type in totals:
+				if totals[site_type] != 0:
+					print(f"\n\t\t\t{totals[site_type]} '{site_type}'", end =" ")
+					pass
+
+	# then print the unavailable parks
+	print(f"\n\nParks that are full for {check_in} - {check_out}...  ")
+	for park_name in summary:
+		if summary[park_name]['is_full'] == True:
+			print(f"\t{park_name[:-4]}")
+
+
+
+if __name__ == '__main__':
+
+	# print(f"\n\nScraping campsite availabilities for all CO State parks, between {START_DATE} and {END_DATE}...\n")
+
+	# parks = update_parks_list(save_path = 'parks.json')
+	# parks_and_sites = update_sites_list(parks_load_path = 'parks.json', save_path = 'parks_and_sites.json')
+
+	filename = 'allparks_' + START_DATE.replace('/','-') + '_to_' + END_DATE.replace('/','-') + '.json'
+	data = load_json(filename)
+
+	# data = update_dates_data(data, START_DATE, END_DATE, save_filename = filename, replace_existing = False):
+
+	summarize(data, check_in = '06/17/2020', check_out = '06/20/2020')
 
 	driver.quit()
 
