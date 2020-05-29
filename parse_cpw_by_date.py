@@ -5,9 +5,9 @@ from selenium import webdriver, common
 from bs4 import BeautifulSoup
 # from datetime import datetime
 import pandas as pd
-# import numpy as np
+import numpy as np
 
-# import json
+import json
 import os
 import time
 
@@ -17,9 +17,12 @@ SITES_BASE_URL = "https://www.cpwshop.com/camping/map-of-golden-gate-canyon-stat
 PARKS_BASE_URL = "https://www.cpwshop.com/camping"
 PARK_ID = '50025'
 SITE_ID = '1073'
-START_DATE, END_DATE = '6/15/2020', '6/28/2020'
+START_DATE, END_DATE = '6/15/2020', '6/30/2020'
 
-def parse_dates(park_id, site_id, start_date, end_date):
+# driver = webdriver.Chrome('chromedriver',chrome_options=chrome_options) #<-- if IN COLAB
+driver = webdriver.Chrome(os.path.abspath("drivers/chromedriver-2")) #<-- if LOCAL
+
+def parse_dates(site_id, start_date, end_date, base_url = DATES_BASE_URL + PARK_ID, ):
 	'''
 	scrapes the avilability of 'site_id' between the start and end dates.  
 
@@ -36,50 +39,50 @@ def parse_dates(park_id, site_id, start_date, end_date):
 	'''
 
 	length_of_stay = 1
-
-	# driver = webdriver.Chrome('chromedriver',chrome_options=chrome_options) #<-- if IN COLAB
-	driver = webdriver.Chrome(os.path.abspath("drivers/chromedriver2")) #<-- if LOCAL
+	
+	date_range = pd.date_range(start = start_date, end = end_date).strftime('%m/%d/%Y')
+	base_url = base_url.replace('campground', 'campsite')
 	
 	def page_generator():
-		date_range = pd.date_range(start = start_date, end = end_date).strftime('%m/%d/%Y')
-		for arrival_date in date_range:
-			page_info = {
-				'url': DATES_BASE_URL + park_id + "&siteID=" + site_id + "&arvdate=" + arrival_date + "&lengthOfStay=" + str(length_of_stay),
-				'date': arrival_date,
-				}
-			yield page_info
+		i = -1
+		for date in date_range:
+			url = base_url + "&siteID=" + site_id + "&arvdate=" + date + "&lengthOfStay=" + str(length_of_stay)
+			i += 1
+			yield url, date, i
 
 	page_gen = page_generator()
 
 	dates_dict = {}
-	while True: # loop until the generator is exhausted
+	while True: # loop until the date generator is exhausted
 		try: 
-			page = next(page_gen)
-			# load URL_parser
-			driver.get(page['url'])
-			content = driver.page_source
-			# scrape the whole page
-			soup = BeautifulSoup(content, features = "html.parser")
-			# locate our target span within our target div
-			calendarGrid = soup.body.find('div', attrs = {'id':'calendarGrid'})
-			first_span = calendarGrid.find('span', recursive=False)
+			url, date, i = next(page_gen)
+			# if we need a new page, get it
+			j = i % 14
+			if j == 0:
+				driver.get(url)
+				content = driver.page_source
+				# scrape the whole page
+				soup = BeautifulSoup(content, features = "html.parser")
+				# locate our target span within our target div
+				calendarGrid = soup.body.find('div', attrs = {'id':'calendarGrid'})
+				# first_span = calendarGrid.find('span', recursive=False)
+				spans = calendarGrid.find_all('span', recursive=False)
 
 			# check the contents of our target span
-			if first_span.a:
-				dates_dict[page['date']] = 'available'
-			elif first_span.text == "R":
-				dates_dict[page['date']] = 'reserved'
+			if spans[j].a:
+				dates_dict[date] = 'available'
+			elif spans[j].text == "R":
+				dates_dict[date] = 'reserved'
 			else: 
-				dates_dict[page['date']] = 'unknown'
+				dates_dict[date] = 'unknown'
 		except StopIteration:
 			break
-	driver.quit()
 
 	return dates_dict
 
 
 
-def get_valid_sites():
+def get_valid_sites(base_url = SITES_BASE_URL + PARK_ID):
 	'''
 	scrapes the valid 'site_id's and relevant site info (only for a single park)  
 
@@ -95,11 +98,8 @@ def get_valid_sites():
 			}
 	'''
 
-	URL = SITES_BASE_URL + PARK_ID + "&tab=sites#"
-	print(URL, "\n", "Starting scrape...")
-
-	# driver = webdriver.Chrome('chromedriver',chrome_options=chrome_options) #<-- if IN COLAB
-	driver = webdriver.Chrome(os.path.abspath("drivers/chromedriver2")) #<-- if LOCAL
+	URL = base_url + "&tab=sites#"
+	print(URL, "\n", "Starting sites scrape...")
 
 	driver.get(URL)
 
@@ -108,28 +108,53 @@ def get_valid_sites():
 	page = 0
 	while next_page_exists:
 		page += 1
-		print(f"\nPage #{page}...")
+		print(f"Page #{page}...")
 		# scrape the whole page
 		content = driver.page_source
 		soup = BeautifulSoup(content, features = "html.parser")
 		# loop through the target <tr>'s
 		for tr in soup.body.find_all('tr', attrs = {'name':'e_Glow'}):
 			# grab the site_id
-			site_id_block = tr.td.div.contents[5] # i.e. the 6th child within the first 'div' within the first 'td' within 'tr'
-			site_id = site_id_block.attrs['id'][9:]
-			# check for pets allowed
-			pets_allowed = False 
-			for child in tr.contents[5].descendants:
-				try: 
-					if child.attrs['title'] == "Pets Allowed":
-						pets_allowed = True
-				except: 
+			try: 
+				site_id_block = tr.td.div.contents[5] # i.e. the 6th child within the first 'div' within the first 'td' within 'tr'
+				site_id = site_id_block.attrs['id'][9:]
+				
+				# check for pets allowed
+				pets_allowed = False 
+				try :
+					for child in tr.contents[5].descendants:
+						try: 
+							if child.attrs['title'] == "Pets Allowed":
+								pets_allowed = True
+						except: 
+							pass
+				except:
+					print(f"Error checking pets for site {site_id}. assuming 'false' and moving on...")
 					pass
-			# load the info into the sites dict
-			sites[site_id] = {
-				'pets_allowed': pets_allowed,
-				'site_type': tr.contents[2].text,
-			}
+				
+				# check site type
+				try: 
+					site_type = tr.contents[2].text
+				except: 
+					site_type = 'unknown'
+					print(f"Error checking 'type' for site {site_id}. Recording 'unknown' and moving on....")
+					pass
+				
+				# load the info into the sites dict
+				sites[site_id] = {
+					'pets_allowed': pets_allowed,
+					'site_type': site_type,
+				}	
+			except: 
+				# ----------
+				# 
+				# 	TODO:   add alt formatting for sites that don't follow the normal structure. 
+				# 			example is site 'centennial GPA' on page 4 of this park:  https://www.cpwshop.com/camping/jackson-lake-state-park/r/campgroundDetails.page?parkID=50028&tab=sites#
+				# 			There's also one on page 5 of this park.  
+				# 
+				# -----------
+				print(f"Error checking site number. (the one after #{site_id}) Skipping this site...")
+				pass
 		# move to the next page
 		try: 
 			time.sleep(1)
@@ -137,10 +162,10 @@ def get_valid_sites():
 			button.click()
 		except common.exceptions.NoSuchElementException as err:
 			next_page_exists = False
-			print("no more pages.")
-		time.sleep(1)
+			print("no more pages.\n")
+		time.sleep(1.5)
 
-	driver.quit()
+	# driver.quit()
 	return sites
 
 
@@ -162,9 +187,6 @@ def get_valid_parks():
 	'''
 	URL = PARKS_BASE_URL + ".page#"
 	print(URL, "\n", "starting parks scrape...")
-
-	# driver = webdriver.Chrome('chromedriver',chrome_options=chrome_options) #<-- if IN COLAB
-	driver = webdriver.Chrome(os.path.abspath("drivers/chromedriver2")) #<-- if LOCAL
 
 	driver.get(URL)
 
@@ -206,7 +228,7 @@ def get_valid_parks():
 						# go back to the original page
 						backlink = driver.find_element_by_id("backlink")
 						backlink.click()
-						time.sleep(1)
+						time.sleep(1.5)
 						page = 1
 						print("\nPage #1...")
 						# exit the for loop
@@ -232,24 +254,85 @@ def get_valid_parks():
 			print("no more pages.")
 		time.sleep(1)
 
-	driver.quit()
+	# driver.quit()
 	return parks
 
 
+def save_json(data_dict, filename):
+	with open(filename, 'w') as file:
+		json.dump(data_dict, file)
+	file.close()
+	print(f"Saved data to file: {filename}.")
+
+def load_json(filename):
+	with open(filename, 'r') as file:
+		data = json.load(file)
+	file.close()
+	print(f"loading data from file: {filename}...")
+	return data
+
 
 if __name__ == '__main__':
-	# print(f"\n\nScraping campsite availabilities for Park#{PARK_ID}, Site#{SITE_ID}, between {START_DATE} and {END_DATE}...")
-	# dates_dict = parse_dates(PARK_ID, SITE_ID, START_DATE, END_DATE)
-	# for key in dates_dict:
-	# 	print("\t",key, dates_dict[key])
+	# print(f"\n\nScraping campsite availabilities for Park#{PARK_ID}, Site#{SITE_ID}, between {START_DATE} and {END_DATE}...\n")
+
+	# dates = parse_dates(PARK_ID, SITE_ID, START_DATE, END_DATE)
+	# for key in dates:
+	# 	print("\t",key, dates[key])
+
 
 	# sites = get_valid_sites()
-	# for key in sites:
+	# for key in sites: #140 sites in 22 sec
 	# 	print(key, ":", sites[key])
+	# print(len(sites))
 
-	parks = get_valid_parks()
-	for key in parks:
-		print(key, ":", parks[key])
+	# parks = get_valid_parks()
+	# for key in parks:  #37 keys, 321 sec
+	# 	print(key, ":", parks[key])
+	# print(len(parks), "parks total\n")
+	# save_json(parks, 'parks.txt')
+
+	print(f"\n\nScraping campsite availabilities for all CO State parks, between {START_DATE} and {END_DATE}...\n")
+
+	# parks = load_json('parks.json')
+	# first_park = next(iter(parks))	
+
+	# for park in parks:
+	# 	sites = get_valid_sites(base_url = parks[park]['url'])
+	# 	parks[park]['sites'] = sites
+	# save_json(parks, 'data_test.json')
+
+	data = load_json('parks_and_sites.json')
+
+
+	# print("\n")
+	# first_park = next(iter(data))	
+	# first_park_url = data[first_park]['url']
+	# first_site = next(iter(data[first_park]['sites']))
+
+	# print(first_park, ",", first_site, ",", first_park_url,"\n")
+	# # print(json.dumps(data[first_park], indent=4))
+
+	# dates = parse_dates(first_site, START_DATE, END_DATE, base_url = first_park_url)
+	# data[first_park]['sites'][first_site]['dates'] = dates
+	# print(json.dumps(data[first_park], indent=4))
+
+	filename = 'allparks_' + START_DATE.replace('/','-') + '_to_' + END_DATE.replace('/','-') + '.json'
+
+	for park in data:
+		print(park)
+		park_url = data[park]['url']
+		
+		for site in data[park]['sites']:
+			print("\t", site)
+			data[park]['sites'][site]['dates'] = parse_dates(site, START_DATE, END_DATE, base_url = park_url)
+
+		save_json(data, filename)
+
+	print(json.dumps(data, indent=4))
+
+	driver.quit()
+
+
 	
 
 
